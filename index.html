@@ -49,6 +49,18 @@
     .camera-indicator { position:absolute; top:12px; left:50%; transform:translateX(-50%); font-size:12px; opacity:.8; letter-spacing:.8px; background:rgba(255,255,255,.08); padding:4px 8px; border-radius:6px; }
 
     @media (max-width:720px){ .bar { width:180px; } }
+
+    /* Mobile controls */
+    #touch { position:fixed; inset:0; pointer-events:none; display:none; }
+    #joy { position:absolute; left:12px; bottom:12px; width:160px; height:160px; pointer-events:auto; touch-action:none; }
+    #joyBase { position:absolute; inset:0; border-radius:50%; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); }
+    #joyKnob { position:absolute; left:50%; top:50%; width:64px; height:64px; margin:-32px 0 0 -32px; border-radius:50%; background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.2); }
+    #btns { position:absolute; right:12px; bottom:12px; display:flex; flex-direction:column; gap:10px; pointer-events:auto; }
+    .btn { background:rgba(255,255,255,.12); color:#fff; border:1px solid rgba(255,255,255,.2); border-radius:999px; padding:12px 16px; font-size:14px; min-width:88px; text-align:center; user-select:none; touch-action:none; }
+    .btn:active { transform:scale(0.98); }
+    #look { position:absolute; inset:0; pointer-events:auto; touch-action:none; }
+
+    @media (min-width:721px){ #touch { display:none; } }
   </style>
 </head>
 <body>
@@ -74,10 +86,9 @@
       <div>Ammo: <span id="ammo">5</span>/<span id="mag">5</span></div>
       <div>Rounds: <span id="round">1</span>/<span id="roundMax">5</span> | Score <span id="scoreA">0</span>-<span id="scoreB">0</span></div>
     </div>
-    <div id="center-note">LMB: Shoot | RMB: Aim/Scope | Shift: Run | C: Crouch | Z: Prone | F: Cover (near wall) | Q/E: Zoom (or Lean in cover) | V: Toggle FPV/TPV | R: Reload</div>
+    <div id="center-note">Touch: Left joystick to move | Drag right side to look | Buttons: Shoot, Aim (hold), Reload, FPV/TPV</div>
 
-    <div id="crosshair"><div class="h"></div><div class="v"></div></div>
-
+    
     <div id="scope">
       <div class="mask"></div>
       <div class="readout"><span id="zoomLbl">2.5x</span><span id="windLbl">Wind 0.0 m/s</span><span id="distLbl">Dist 0 m</span></div>
@@ -95,6 +106,20 @@
       <div class="row"><label>Mouse Sensitivity</label><input type="range" id="sensitivity" min="0.2" max="2.0" value="1.0" step="0.05"></div>
       <button id="startBtn">Start</button>
       <div style="opacity:.75; font-size:12px; margin-top:10px;">Use your mouse to look around. Build incrementally and test frequently.</div>
+    </div>
+
+    <div id="touch">
+      <div id="look"></div>
+      <div id="joy">
+        <div id="joyBase"></div>
+        <div id="joyKnob"></div>
+      </div>
+      <div id="btns">
+        <div class="btn" id="btnShoot">Shoot</div>
+        <div class="btn" id="btnAim">Aim</div>
+        <div class="btn" id="btnReload">Reload</div>
+        <div class="btn" id="btnCam">FPV/TPV</div>
+      </div>
     </div>
 
     <div id="scoreboard">
@@ -144,12 +169,27 @@
       invertY: document.getElementById('invertY'), sensitivity: document.getElementById('sensitivity'),
       scoreboard: document.getElementById('scoreboard'), roundWinner: document.getElementById('roundWinner'), scoreText: document.getElementById('scoreText'), nextRound: document.getElementById('nextRound'),
       camMode: document.getElementById('camMode'),
+      joy: document.getElementById('joy'),
+      joyBase: document.getElementById('joyBase'),
+      joyKnob: document.getElementById('joyKnob'),
+      look: document.getElementById('look'),
+      btnShoot: document.getElementById('btnShoot'),
+      btnAim: document.getElementById('btnAim'),
+      btnReload: document.getElementById('btnReload'),
+      btnCam: document.getElementById('btnCam'),
+      touch: document.getElementById('touch'),
     };
 
     // --- Three.js Setup
     const renderer = new THREE.WebGLRenderer({ antialias:true });
     document.body.appendChild(renderer.domElement);
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.physicallyCorrectLights = true;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1117);
     scene.fog = new THREE.FogExp2(0x0b0e12, 0.01);
@@ -161,7 +201,15 @@
     const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 2000);
 
     const hemi = new THREE.HemisphereLight(0x7aa0ff, 0x1b1b1b, 0.9); scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(120, 240, 100); sun.castShadow = true; scene.add(sun);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(120, 240, 100); sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 10;
+    sun.shadow.camera.far = 1000;
+    sun.shadow.camera.left = -200;
+    sun.shadow.camera.right = 200;
+    sun.shadow.camera.top = 200;
+    sun.shadow.camera.bottom = -200;
+    scene.add(sun);
 
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200,1200), new THREE.MeshStandardMaterial({ color:0x1a1f26 }));
     ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
@@ -236,15 +284,6 @@
       })();
       MapState.objects.push(roofA.group, roofB.group);
     }
-      const mat = new THREE.MeshStandardMaterial({ color:0x232a33, metalness:.2, roughness:.9 });
-      for(let i=0;i<60;i++){
-        const w=12+Math.random()*30,d=12+Math.random()*30,h=10+Math.random()*120;
-        const m=mat.clone(); m.color.offsetHSL((Math.random()-.5)*.05,0,(Math.random()-.5)*.05);
-        const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m);
-        b.position.set((Math.random()-.5)*900, h/2, (Math.random()-.5)*900);
-        b.castShadow=true; b.receiveShadow=true; scene.add(b); coverObjects.push(b);
-      }
-    })();
 
     // Operators with basic tactical gear proxies
     function createOperator(theme){
@@ -323,52 +362,70 @@
     }
     window.addEventListener('resize', onResize); onResize();
 
-    // Pointer lock for mouse look
-    let pointerLocked = false;
-    function lockPointer(){ renderer.domElement.requestPointerLock?.(); }
-    document.addEventListener('pointerlockchange', ()=>{ pointerLocked = document.pointerLockElement===renderer.domElement; });
+    // Pointer lock disabled for touch-only controls
+    function lockPointer(){}
 
-    // Mouse look
-    function onMouseMove(e){
-      if(!pointerLocked) return;
-      const base = 0.0022 * camState.sens;
-      // Smooth mouse look: apply velocity then damp
-      camState.yawVel += (-e.movementX) * base;
-      const signY = camState.invertY ? 1 : -1;
-      camState.pitchVel += (e.movementY * signY) * base;
-    }
-    window.addEventListener('mousemove', onMouseMove);
+    // Mouse look disabled; touch look is handled in the touch 'look' area handlers above
 
-    // Input
+    // Input disabled for keyboard; touch UI controls are used instead
     const keys = new Set();
-    window.addEventListener('keydown', (e)=>{
-      keys.add(e.code);
-      switch(e.code){
-        case 'KeyV': toggleCamera(); break;
-        case 'KeyQ': if (ctrl.cover) { ctrl.leanTarget = -1; } else { setZoom(-1); } break;
-        case 'KeyE': if (ctrl.cover) { ctrl.leanTarget =  1; } else { setZoom(1); } break;
-        case 'KeyR': reload(); break;
-        case 'KeyI': camState.invertY = !camState.invertY; UI.invertY && (UI.invertY.checked = camState.invertY); notify('Invert Y: ' + (camState.invertY?'ON':'OFF')); break;
-        case 'ShiftLeft': case 'ShiftRight': ctrl.running = true; break;
-        case 'KeyC': toggleCrouch(); break;
-        case 'KeyZ': case 'KeyX': toggleProne(); break;
-        case 'KeyF': if (ctrl.cover) exitCover(); else tryEnterCover(); break;
-      }
-    });
-    window.addEventListener('keyup', (e)=>{ 
-      keys.delete(e.code);
-      if (e.code==='ShiftLeft' || e.code==='ShiftRight') ctrl.running = false;
-      if ((e.code==='KeyQ' || e.code==='KeyE') && ctrl.cover) ctrl.leanTarget = 0;
-    });
 
-    // Context menu off for right-click scope
+    // Disable mouse shooting/aiming; touch buttons handle actions
     window.addEventListener('contextmenu', (e)=> e.preventDefault());
-    window.addEventListener('mousedown', (e)=>{
-      if (Game.paused) return;
-      if (e.button===0) shoot();
-      if (e.button===2) toggleScope(true);
-    });
-    window.addEventListener('mouseup', (e)=>{ if(e.button===2) toggleScope(false); });
+
+// Mobile touch controls
+const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
+const touchAxes = { x:0, z:0 };
+
+if (isMobile) {
+  // Reduce default passive behavior to allow preventDefault on touch events (avoid scroll/refresh)
+  document.body.style.touchAction = 'none';
+
+  // Buttons
+  UI.btnShoot?.addEventListener('touchstart', (e)=>{ e.preventDefault(); if(!Game.paused) shoot(); }, {passive:false});
+  UI.btnAim?.addEventListener('touchstart', (e)=>{ e.preventDefault(); toggleScope(true); }, {passive:false});
+  const endAim = (e)=>{ e.preventDefault(); toggleScope(false); };
+  UI.btnAim?.addEventListener('touchend', endAim, {passive:false});
+  UI.btnAim?.addEventListener('touchcancel', endAim, {passive:false});
+  UI.btnReload?.addEventListener('touchstart', (e)=>{ e.preventDefault(); reload(); }, {passive:false});
+  UI.btnCam?.addEventListener('touchstart', (e)=>{ e.preventDefault(); toggleCamera(); }, {passive:false});
+
+  // Joystick
+  let joyId = null;
+  function updateJoy(cx, cy){
+    const rect = UI.joyBase.getBoundingClientRect();
+    const mx = rect.left + rect.width/2;
+    const my = rect.top + rect.height/2;
+    let dx = cx - mx; let dy = cy - my;
+    const max = rect.width * 0.4;
+    const mag = Math.hypot(dx, dy);
+    if (mag > max) { dx *= max/mag; dy *= max/mag; }
+    UI.joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    touchAxes.x = dx / max;
+    touchAxes.z = dy / max;
+  }
+  UI.joy?.addEventListener('touchstart', (e)=>{ const t=e.changedTouches[0]; joyId=t.identifier; updateJoy(t.clientX, t.clientY); e.preventDefault(); }, {passive:false});
+  UI.joy?.addEventListener('touchmove', (e)=>{ const t=[...e.changedTouches].find(tt=>tt.identifier===joyId); if(!t) return; updateJoy(t.clientX, t.clientY); e.preventDefault(); }, {passive:false});
+  const joyEnd = (e)=>{ if([...e.changedTouches].some(tt=>tt.identifier===joyId)){ joyId=null; touchAxes.x=0; touchAxes.z=0; UI.joyKnob.style.transform='translate(0px,0px)'; } e.preventDefault(); };
+  UI.joy?.addEventListener('touchend', joyEnd, {passive:false});
+  UI.joy?.addEventListener('touchcancel', joyEnd, {passive:false});
+
+  // Look area
+  let lookId = null, lastX = 0, lastY = 0;
+  UI.look?.addEventListener('touchstart', (e)=>{ const t=e.changedTouches[0]; lookId=t.identifier; lastX=t.clientX; lastY=t.clientY; e.preventDefault(); }, {passive:false});
+  UI.look?.addEventListener('touchmove', (e)=>{ const t=[...e.changedTouches].find(tt=>tt.identifier===lookId); if(!t) return; const dx=t.clientX-lastX; const dy=t.clientY-lastY; lastX=t.clientX; lastY=t.clientY; const base=0.0022*camState.sens; const signY=camState.invertY?1:-1; camState.yawVel += -dx*base; camState.pitchVel += dy*signY*base; e.preventDefault(); }, {passive:false});
+  const lookEnd = (e)=>{ if([...e.changedTouches].some(tt=>tt.identifier===lookId)) lookId=null; e.preventDefault(); };
+  UI.look?.addEventListener('touchend', lookEnd, {passive:false});
+  UI.look?.addEventListener('touchcancel', lookEnd, {passive:false});
+}
+
+function getInputAxes(){
+  let x = touchAxes.x || 0;
+  let z = touchAxes.z || 0;
+  const len = Math.hypot(x, z);
+  if (len > 1) { x/=len; z/=len; }
+  return { x, z };
+}
 
     function toggleScope(on){
       Game.isScoped = on; UI.scope.classList.toggle('active', on);
@@ -443,7 +500,7 @@
       ctrl.lean += (ctrl.leanTarget - ctrl.lean) * Math.min(1, dt * 6);
 
       // head-bob and breathing
-      const moving = (keys.has('KeyA')||keys.has('KeyD')||keys.has('KeyW')||keys.has('KeyS'));
+      const moving = (Math.hypot(touchAxes.x, touchAxes.z) > 0.05);
       const t = performance.now()/1000; const bobAmp = moving ? 0.02 : 0.0; const breath = (!moving? 0.01 : 0.004);
       const bobX = Math.sin(t*10) * bobAmp; const bobY = Math.abs(Math.cos(t*20)) * bobAmp * 0.6 + Math.sin(t*2.2)*breath;
 
@@ -612,7 +669,9 @@
       return s;
     }
     function stepMovement(dt){
-      let x=0,z=0; if(keys.has('KeyA'))x-=1; if(keys.has('KeyD'))x+=1; if(keys.has('KeyW'))z-=1; if(keys.has('KeyS'))z+=1; let l=Math.hypot(x,z);
+      const axes = getInputAxes();
+      let x = axes.x, z = axes.z;
+      let l = Math.hypot(x,z);
       if (ctrl.stance===Stance.PRONE) { x=0; l=Math.abs(z); } // crawl forward/back only
       if(l>0){ x/=l; z/=l; }
       moveState.max = currentMaxSpeed();
@@ -645,8 +704,16 @@
       dir.addScaledVector(forward, moveState.vel.y * dt);
 
       // bounds
-      P1.obj.position.x = THREE.MathUtils.clamp(P1.obj.position.x + dir.x, roofA.group.position.x-12, roofA.group.position.x+12);
-      P1.obj.position.z = THREE.MathUtils.clamp(P1.obj.position.z + dir.z, roofA.group.position.z-12, roofA.group.position.z+12);
+      let minX, maxX, minZ, maxZ;
+      if (MapState.current==='city' && roofA) {
+        minX = roofA.group.position.x - 12; maxX = roofA.group.position.x + 12;
+        minZ = roofA.group.position.z - 12; maxZ = roofA.group.position.z + 12;
+      } else {
+        // beach/open map bounds
+        minX = -90; maxX = 90; minZ = -90; maxZ = 90;
+      }
+      P1.obj.position.x = THREE.MathUtils.clamp(P1.obj.position.x + dir.x, minX, maxX);
+      P1.obj.position.z = THREE.MathUtils.clamp(P1.obj.position.z + dir.z, minZ, maxZ);
 
       // leave cover if moving away from it
       if (ctrl.cover && Math.abs(moveState.vel.x)+Math.abs(moveState.vel.y) > 0.1){
@@ -689,7 +756,7 @@
         placePlayersOnBeach();
       }
 
-      UI.menu.style.display='none'; Game.paused=false; lockPointer();
+      UI.menu.style.display='none'; if (UI.touch) UI.touch.style.display = 'block'; Game.paused=false;
     });
   </script>
 </body>
